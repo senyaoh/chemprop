@@ -12,7 +12,7 @@ from typing import Any, Callable, List, Tuple, Union
 import collections
 
 from sklearn.metrics import auc, mean_absolute_error, mean_squared_error, precision_recall_curve, r2_score,\
-    roc_auc_score, accuracy_score, log_loss
+    roc_auc_score, accuracy_score, log_loss, f1_score, confusion_matrix
 import torch
 import torch.nn as nn
 from torch.optim import Adam, Optimizer
@@ -23,7 +23,6 @@ from chemprop.args import PredictArgs, TrainArgs
 from chemprop.data import StandardScaler, MoleculeDataset, preprocess_smiles_columns, get_task_names
 from chemprop.models import MoleculeModel
 from chemprop.nn_utils import NoamLR
-from chemprop.spectra_utils import sid_loss, sid_metric, wasserstein_loss, wasserstein_metric
 
 
 def makedirs(path: str, isfile: bool = False) -> None:
@@ -329,13 +328,6 @@ def get_loss_func(args: TrainArgs) -> nn.Module:
     :param args: Arguments containing the dataset type ("classification", "regression", or "multiclass").
     :return: A PyTorch loss function.
     """
-    if args.alternative_loss_function is not None:
-        if args.dataset_type == 'spectra' and args.alternative_loss_function == 'wasserstein':
-            return wasserstein_loss
-        else:
-            raise ValueError(f'Alternative loss function {args.alternative_loss_function} not '
-                                'supported with dataset type {args.dataset_type}.')
-
     if args.dataset_type == 'classification':
         return nn.BCEWithLogitsLoss(reduction='none')
 
@@ -344,9 +336,6 @@ def get_loss_func(args: TrainArgs) -> nn.Module:
 
     if args.dataset_type == 'multiclass':
         return nn.CrossEntropyLoss(reduction='none')
-
-    if args.dataset_type == 'spectra':
-        return sid_loss
 
     raise ValueError(f'Dataset type "{args.dataset_type}" not supported.')
 
@@ -418,6 +407,52 @@ def accuracy(targets: List[int], preds: Union[List[float], List[List[float]]], t
 
     return accuracy_score(targets, hard_preds)
 
+def f1s(targets: List[float], preds: List[float], threshold: float = 0.5) -> float:
+    """
+    Computes the mean f1 score.
+
+    :param targets: A list of targets.
+    :param preds: A list of predictions.
+    :return: The computed f1 score.
+    """
+    if type(preds[0]) == list:  # multiclass
+        hard_preds = [p.index(max(p)) for p in preds]
+    else:
+        hard_preds = [1 if p > threshold else 0 for p in preds]  # binary prediction
+    return f1_score(targets, hard_preds)
+
+def sensitivity(targets: List[float], preds: List[float], threshold: float = 0.5) -> float:
+    """
+    Computes the sensitivity.
+
+    :param targets: A list of targets.
+    :param preds: A list of predictions.
+    :return: The computed sensitivity.
+    """
+    if type(preds[0]) == list:  # multiclass
+        hard_preds = [p.index(max(p)) for p in preds]
+    else:
+        hard_preds = [1 if p > threshold else 0 for p in preds]  # binary prediction
+    tn, fp, fn, tp = confusion_matrix(targets, hard_preds).ravel()
+    sensitivity = tp/(tp+fn)
+    return sensitivity
+
+def specificity(targets: List[float], preds: List[float], threshold: float = 0.5) -> float:
+    """
+    Computes the specificity.
+
+    :param targets: A list of targets.
+    :param preds: A list of predictions.
+    :return: The computed specificity.
+    """
+    if type(preds[0]) == list:  # multiclass
+        hard_preds = [p.index(max(p)) for p in preds]
+    else:
+        hard_preds = [1 if p > threshold else 0 for p in preds]  # binary prediction
+    tn, fp, fn, tp = confusion_matrix(targets, hard_preds).ravel()
+    specificity = tn/(tn+fp)
+    return specificity
+
 
 def get_metric_func(metric: str) -> Callable[[Union[List[int], List[float]], List[float]], float]:
     r"""
@@ -464,12 +499,15 @@ def get_metric_func(metric: str) -> Callable[[Union[List[int], List[float]], Lis
 
     if metric == 'binary_cross_entropy':
         return bce
-    
-    if metric == 'sid':
-        return sid_metric
-    
-    if metric == 'wasserstein':
-        return wasserstein_metric
+
+    if metric == 'f1s':
+        return f1s
+
+    if metric == 'sensitivity':
+        return sensitivity
+
+    if metric == 'specificity':
+        return specificity
 
     raise ValueError(f'Metric "{metric}" not supported.')
 
