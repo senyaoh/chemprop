@@ -355,12 +355,15 @@ class TrainArgs(CommonArgs):
     """
     Whether to adjust MPNN layer to take reactions as input instead of molecules.
     """
-    reaction_mode: Literal['reac_prod', 'reac_diff', 'prod_diff'] = 'reac_diff'
+    reaction_mode: Literal['reac_prod', 'reac_diff', 'prod_diff', 'reac_prod_balance', 'reac_diff_balance', 'prod_diff_balance'] = 'reac_diff'
     """
     Choices for construction of atom and bond features for reactions
     :code:`reac_prod`: concatenates the reactants feature with the products feature.
     :code:`reac_diff`: concatenates the reactants feature with the difference in features between reactants and products. 
     :code:`prod_diff`: concatenates the products feature with the difference in features between reactants and products. 
+    :code:`reac_prod_balance`: concatenates the reactants feature with the products feature, balances imbalanced reactions.
+    :code:`reac_diff_balance`: concatenates the reactants feature with the difference in features between reactants and products, balances imbalanced reactions. 
+    :code:`prod_diff_balance`: concatenates the products feature with the difference in features between reactants and products, balances imbalanced reactions. 
     """
     explicit_h: bool = False
     """
@@ -500,7 +503,7 @@ class TrainArgs(CommonArgs):
     def process_args(self) -> None:
         super(TrainArgs, self).process_args()
 
-        global temp_dir  # Prevents the temporary directory from being deleted upon function return
+        global temp_save_dir  # Prevents the temporary directory from being deleted upon function return
 
         # Process SMILES columns
         self.smiles_columns = chemprop.data.utils.preprocess_smiles_columns(
@@ -518,8 +521,8 @@ class TrainArgs(CommonArgs):
 
         # Create temporary directory as save directory if not provided
         if self.save_dir is None:
-            temp_dir = TemporaryDirectory()
-            self.save_dir = temp_dir.name
+            temp_save_dir = TemporaryDirectory()
+            self.save_dir = temp_save_dir.name
 
         # Fix ensemble size if loading checkpoints
         if self.checkpoint_paths is not None and len(self.checkpoint_paths) > 0:
@@ -714,6 +717,24 @@ class HyperoptArgs(TrainArgs):
     """Path to :code:`.json` file where best hyperparameter settings will be written."""
     log_dir: str = None
     """(Optional) Path to a directory where all results of the hyperparameter optimization will be written."""
+    hyperopt_checkpoint_dir: str = None
+    """Path to a directory where hyperopt completed trial data is stored. Hyperopt job will include these trials if restarted.
+    Can also be used to run multiple instances in parallel if they share the same checkpoint directory."""
+    startup_random_iters: int = 10
+    """The initial number of trials that will be randomly specified before TPE algorithm is used to select the rest."""
+    manual_trial_dirs: List[str] = None
+    """Paths to save directories for manually trained models in the same search space as the hyperparameter search.
+    Results will be considered as part of the trial history of the hyperparameter search."""
+
+
+    def process_args(self) -> None:
+        super(HyperoptArgs, self).process_args()
+
+        # Assign log and checkpoint directories if none provided
+        if self.log_dir is None:
+            self.log_dir = self.save_dir
+        if self.hyperopt_checkpoint_dir is None:
+            self.hyperopt_checkpoint_dir = self.log_dir
 
 
 class SklearnTrainArgs(TrainArgs):
@@ -731,6 +752,8 @@ class SklearnTrainArgs(TrainArgs):
     """Number of bits in morgan fingerprint."""
     num_trees: int = 500
     """Number of random forest trees."""
+    impute_mode: Literal['single_task', 'median', 'mean', 'linear','frequent'] = None
+    """How to impute missing data (None means no imputation)."""
 
 
 class SklearnPredictArgs(Tap):
